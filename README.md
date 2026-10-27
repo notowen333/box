@@ -100,25 +100,6 @@ let exit_code = strands_box::generate_policy_schema(
 );
 ```
 
-To check the policy that a configuration selects before a run:
-
-```rust,no_run
-match strands_box::check_policy("/absolute/box.toml".into()) {
-    Ok(check) => {
-        for finding in check.errors() {
-            if let Some(location) = finding.location() {
-                eprint!("line {}, column {}: ", location.line(), location.column());
-            }
-            eprintln!("{}", finding.message());
-        }
-    }
-    Err(failed) => eprintln!("cannot check the policy: {failed}"),
-}
-```
-
-`check_policy` validates the policy that `box.toml` selects, as `run` does, and starts nothing.
-[What refuses to load](docs/design/policy.md#what-refuses-to-load) describes the check.
-
 ## Architecture
 
 Box runs the Dogwood Local Engine and its enforcement components outside the
