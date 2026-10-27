@@ -63,6 +63,8 @@ when temporal {
 };
 "#;
 
+const SPELLING: &str = "@id(\"slash\") permit (principal, action == Box::Action::\"fs:read\", resource) when { context.input.path == \"/tmp/dir/\" };\n";
+
 const TYPED: &str =
     "@id(\"tool\") permit (principal, action == alpha::Action::\"read\", resource);\n";
 
@@ -159,6 +161,7 @@ fn a_check_refuses_exactly_what_open_refuses() {
         SHARED_ID,
         RESERVED,
         CAP_AS_PERMIT,
+        SPELLING,
         TYPED,
         "",
     ] {
@@ -180,6 +183,7 @@ fn a_staged_check_refuses_exactly_what_open_staged_refuses() {
         SHARED_ID,
         RESERVED,
         CAP_AS_PERMIT,
+        SPELLING,
         TYPED,
     ] {
         let with_tool = format!("{text}\n{TYPED}");
@@ -264,4 +268,32 @@ fn a_check_of_two_sources_names_no_line() {
         true,
     );
     assert_eq!(check.errors()[0].location(), None);
+}
+
+#[test]
+fn an_inert_spelling_names_its_rule() {
+    let check = check(&format!("{GOOD}\n{SPELLING}"));
+    let finding = &check.errors()[0];
+    assert!(
+        finding.message().contains("trailing slash"),
+        "{}",
+        finding.message()
+    );
+    let rule = &finding.rules()[0];
+    assert_eq!((rule.position(), rule.id()), (2, Some("slash")));
+}
+
+#[test]
+fn a_finding_about_the_whole_rule_names_no_line() {
+    let check = check(UNKNOWN_ACTION);
+    let whole = check
+        .errors()
+        .iter()
+        .find(|finding| {
+            finding
+                .message()
+                .starts_with("unable to find an applicable action")
+        })
+        .expect("cedar names the rule's scope too");
+    assert_eq!(whole.location(), None);
 }

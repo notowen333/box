@@ -638,7 +638,10 @@ pub(crate) fn check_and_expand(
         return Err(Refused::new(error, findings));
     }
 
-    let warnings = crate::spelling::judge(lowered.as_cedar(), operator)?
+    let warnings =
+        crate::spelling::judge_naming(lowered.as_cedar(), operator, &|cedar_policy_id| {
+            rule_ref(&lowered, cedar_policy_id, positions)
+        })?
         .into_iter()
         .chain(cap_warnings)
         .collect();
@@ -744,10 +747,11 @@ fn validation_finding(
     let named = cedar_policy_id(&message);
     let rule = named.and_then(|(id, _)| rule_ref(lowered, id, positions));
     let own = named.map_or(message.as_str(), |(_, rest)| rest);
+    let whole_rule = own.starts_with("unable to find an applicable action");
     let mut finding = Finding::new(own)
         .with_help(help)
         .with_rules(rule.into_iter().collect());
-    if let Some(span) = span {
+    if let Some(span) = span.filter(|_| !whole_rule) {
         finding = finding.with_span(span);
     }
     (message, finding)

@@ -218,9 +218,17 @@ fn line_and_column(source: &str, offset: usize) -> (usize, usize) {
 pub(crate) fn annotated_id(rendered: &str) -> Option<String> {
     let mut rest = rendered.trim_start();
     while let Some(annotation) = rest.strip_prefix('@') {
-        let open = annotation.find('(')?;
-        let name = annotation[..open].trim();
-        let mut characters = annotation[open + 1..].trim_start().char_indices();
+        let name_end = annotation
+            .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .unwrap_or(annotation.len());
+        let name = &annotation[..name_end];
+        let after_name = annotation[name_end..].trim_start();
+        let Some(argument) = after_name.strip_prefix('(') else {
+            rest = after_name;
+            continue;
+        };
+        let argument = argument.trim_start();
+        let mut characters = argument.char_indices();
         if characters.next().map(|(_, character)| character) != Some('"') {
             return None;
         }
@@ -239,8 +247,10 @@ pub(crate) fn annotated_id(rendered: &str) -> Option<String> {
         if name == "id" {
             return Some(value);
         }
-        let after = &annotation[open + 1..].trim_start()[end? + 1..];
-        rest = after.trim_start().strip_prefix(')')?.trim_start();
+        rest = argument[end? + 1..]
+            .trim_start()
+            .strip_prefix(')')?
+            .trim_start();
     }
     None
 }
@@ -308,6 +318,10 @@ mod tests {
             )
             .as_deref(),
             Some("permit_all")
+        );
+        assert_eq!(
+            annotated_id("@foo @id(\"x\") permit (principal, action, resource);").as_deref(),
+            Some("x")
         );
     }
 

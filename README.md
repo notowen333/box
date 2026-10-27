@@ -103,14 +103,17 @@ let exit_code = strands_box::generate_policy_schema(
 To check the policy that a configuration selects before a run:
 
 ```rust,no_run
-let check = strands_box::check_policy("/absolute/box.toml".into())?;
-for finding in check.errors() {
-    if let Some(location) = finding.location() {
-        eprint!("line {}, column {}: ", location.line(), location.column());
+match strands_box::check_policy("/absolute/box.toml".into()) {
+    Ok(check) => {
+        for finding in check.errors() {
+            if let Some(location) = finding.location() {
+                eprint!("line {}, column {}: ", location.line(), location.column());
+            }
+            eprintln!("{}", finding.message());
+        }
     }
-    eprintln!("{}", finding.message());
+    Err(failed) => eprintln!("cannot check the policy: {failed}"),
 }
-# Ok::<(), strands_box::CheckFailed>(())
 ```
 
 `check_policy` reads `box.toml` and its policy file as `run` reads them, and validates the
