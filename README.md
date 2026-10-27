@@ -116,14 +116,8 @@ match strands_box::check_policy("/absolute/box.toml".into()) {
 }
 ```
 
-`check_policy` reads `box.toml` and its policy file as `run` reads them, and validates the
-policy as a box does when it opens. It starts nothing, writes nothing, and does not use the
-one `run` that a process allows. `errors` is empty when `run` would load the policy. Each
-finding names its rules by position and `@id`, its line and column when the engine reports
-them, and a hint such as ``did you mean `path`?``. When the configuration declares a local
-MCP server, a rule that names a per-tool MCP action is in `unchecked` instead, because only the
-running box can validate it. `check_policy` returns `CheckFailed` when it cannot read
-`box.toml` or the policy file.
+`check_policy` validates the policy that `box.toml` selects, as `run` does, and starts nothing.
+[What refuses to load](docs/design/policy.md#what-refuses-to-load) describes the check.
 
 ## Architecture
 
