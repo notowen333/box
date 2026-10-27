@@ -100,6 +100,28 @@ let exit_code = strands_box::generate_policy_schema(
 );
 ```
 
+To check the policy that a configuration selects before a run:
+
+```rust,no_run
+let check = strands_box::check_policy("/absolute/box.toml".into())?;
+for finding in check.errors() {
+    if let Some(location) = finding.location() {
+        eprint!("line {}, column {}: ", location.line(), location.column());
+    }
+    eprintln!("{}", finding.message());
+}
+# Ok::<(), strands_box::CheckFailed>(())
+```
+
+`check_policy` reads `box.toml` and its policy file as `run` reads them, and validates the
+policy as a box does when it opens. It starts nothing, writes nothing, and does not use the
+one `run` that a process allows. `errors` is empty when `run` would load the policy. Each
+finding names its rules by position and `@id`, its line and column when the engine reports
+them, and a hint such as ``did you mean `path`?``. When the configuration declares a local
+MCP server, a rule that names a per-tool MCP action is in `unchecked` instead, because only the
+running box can validate it. `check_policy` returns `CheckFailed` when it cannot read
+`box.toml` or the policy file.
+
 ## Architecture
 
 Box runs the Dogwood Local Engine and its enforcement components outside the
