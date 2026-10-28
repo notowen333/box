@@ -902,6 +902,7 @@ mod tests {
             root,
             vec![crate::record::config::mcp::McpServer {
                 name: "alpha".to_string(),
+                alias: None,
                 command: vec!["alpha-mcp".to_string()],
             }],
         )
@@ -1244,6 +1245,7 @@ wait"#;
             vec![
                 crate::record::config::mcp::McpServer {
                     name: "alpha".to_string(),
+                    alias: None,
                     command: vec![
                         "/bin/sh".to_string(),
                         "-c".to_string(),
@@ -1255,6 +1257,7 @@ wait"#;
                 },
                 crate::record::config::mcp::McpServer {
                     name: "beta".to_string(),
+                    alias: None,
                     command: vec!["/bin/false".to_string()],
                 },
             ],
