@@ -64,13 +64,32 @@ when { ["fetch", "github"].contains(context.input.server) };
 
 Add each server to the harness's own MCP configuration.
 
-- **A `stdio` server:** set its command to the program, the first element of `command`. The
-  harness runs the alias, and the box starts the server.
+- **A `stdio` server:** set its command to the server's full `command` from `box.toml`: the
+  program, then every argument, in the same order. The harness runs the alias with those arguments,
+  and the box starts the server whose `command` matches.
 - **An `http` server:** set its URL. For a server with `secret.ref = "env://NAME"`, send the
   placeholder from `NAME` in the header, or set `secret.inject = "always"` and send no header.
 
-Use your client's configuration format for these settings. The server command or URL must match the
-server declared in `box.toml`.
+Use your client's configuration format for these settings. For this `box.toml` table:
+
+```toml
+[mcp.playwright]
+type    = "stdio"
+command = ["npx", "-y", "@playwright/mcp"]
+```
+
+a client that takes a command and its arguments apart gets:
+
+```json
+{ "mcpServers": { "playwright": { "command": "npx", "args": ["-y", "@playwright/mcp"] } } }
+```
+
+A harness entry that sets only the program, `"command": "npx"` with no `args`, is refused for this
+server with `no MCP server declares "npx"; servers on npx: playwright`. Add the
+arguments to the harness entry. The same applies to every `stdio` server whose `command` has
+arguments.
+
+The server URL must match the server declared in `box.toml`.
 
 ## Step 3. Find the tool and argument names
 
@@ -155,6 +174,7 @@ that `forbid` and the per-tool action. The agent gets each refusal as an MCP err
 | Refusal | Cause |
 |---|---|
 | `MCP server "<name>" may not start` | No `shell:spawn` permit for the program. |
+| `no MCP server declares "<command>"` | The harness's command or arguments differ from every `command` on that program. Copy the `command` of one of the listed servers from `box.toml` into the harness, as in [step 2](#step-2-connect-the-harness). |
 | The harness shows the server with zero tools | A rule refuses `tools/list` for the server. |
 | `the MCP tool catalog is not accepted` | The agent called a tool before the server's `tools/list` succeeded. |
 | `the tool is not in the accepted MCP catalog` | The server's `tools/list` does not name the tool, spelled exactly. |
