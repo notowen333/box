@@ -174,8 +174,9 @@ pub(crate) fn from_entries(
     Ok(partition(entries)?.0)
 }
 
-/// The server whose `command`, with its arguments as `launched` gives them, is `program` and
-/// `arguments`, word for word.
+/// The server whose `command` is `program` and `arguments`, word for word, with its arguments as
+/// written or as `launched` gives them. A server whose command `launched` cannot give is never
+/// selected, because it cannot start.
 pub(crate) fn for_command<'a>(
     servers: &'a [McpServer],
     program: &str,
@@ -184,7 +185,8 @@ pub(crate) fn for_command<'a>(
 ) -> Option<&'a McpServer> {
     servers.iter().find(|server| {
         server.program() == program
-            && launched(server).is_some_and(|launched| launched == arguments)
+            && launched(server)
+                .is_some_and(|launched| launched == arguments || server.arguments() == arguments)
     })
 }
 
@@ -472,6 +474,64 @@ mod tests {
                 "{arguments:?} is not the declared command, so it must select nothing"
             );
         }
+    }
+
+    /// A launch selects a server by its command as written or as Box expands it, because an
+    /// endpoint token expands to a port that is new on each run.
+    #[test]
+    fn a_launch_selects_a_server_by_its_command_as_written_or_as_expanded() {
+        let file = parse(
+            r#"
+            [[server]]
+            name = "traced"
+            command = ["traced-mcp", "--endpoint", "${OTEL_EXPORTER_OTLP_ENDPOINT}"]
+            "#,
+        )
+        .expect("valid");
+        let expanded = |server: &McpServer| {
+            Some(
+                server
+                    .arguments()
+                    .iter()
+                    .map(|argument| {
+                        argument.replace("${OTEL_EXPORTER_OTLP_ENDPOINT}", "http://127.0.0.1:43117")
+                    })
+                    .collect(),
+            )
+        };
+
+        for arguments in [
+            words(&["--endpoint", "${OTEL_EXPORTER_OTLP_ENDPOINT}"]),
+            words(&["--endpoint", "http://127.0.0.1:43117"]),
+        ] {
+            assert_eq!(
+                for_command(&file, "traced-mcp", &arguments, expanded)
+                    .map(|server| server.name.as_str()),
+                Some("traced"),
+                "{arguments:?} is the command as written or as Box starts it"
+            );
+        }
+        assert!(
+            for_command(
+                &file,
+                "traced-mcp",
+                &words(&["--endpoint", "http://127.0.0.1:1"]),
+                expanded
+            )
+            .is_none(),
+            "another port is neither the written nor the started command"
+        );
+        let unexpanded = |_: &McpServer| None;
+        assert!(
+            for_command(
+                &file,
+                "traced-mcp",
+                &words(&["--endpoint", "${OTEL_EXPORTER_OTLP_ENDPOINT}"]),
+                unexpanded
+            )
+            .is_none(),
+            "a server whose command does not expand cannot start, so no launch selects it"
+        );
     }
 
     /// Two entries with one full command are refused.

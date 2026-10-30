@@ -80,8 +80,9 @@ server:
 Words that mean the same thing to the server are still different words. `--port=3000` and
 `--port 3000` don't match, and neither do `~/data` and `/Users/me/data`. Write each argument the same
 way in `box.toml` and in the harness. An argument that holds `${OTEL_EXPORTER_OTLP_ENDPOINT}`,
-`${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT}`, or `${OTEL_EXPORTER_OTLP_PROTOCOL}` matches the value the box
-puts in its place, so the harness passes the value, not the name.
+`${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT}`, or `${OTEL_EXPORTER_OTLP_PROTOCOL}` matches both the name as
+written and the value the box puts in its place. The endpoint values hold a port that is new on each
+run, so a harness with a fixed configuration passes the name, as written in `box.toml`.
 
 A box whose servers share a program stores a newer record than earlier `box` builds read. An
 earlier build refuses that box directory.

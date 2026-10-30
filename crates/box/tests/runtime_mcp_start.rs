@@ -469,12 +469,6 @@ fn a_launch_matches_the_declared_command_as_box_expands_it() {
 
     let mut run = box_.spawn();
     run.wait_for(box_.workload_path("workload.started"), BOX_STARTUP);
-    assert_launch_refused(&box_, "alpha-mcp", &declared);
-    assert_eq!(
-        box_.invocation_count("alpha-mcp"),
-        0,
-        "the unexpanded token is not the command Box starts"
-    );
 
     let expanded = ["--declared", "alpha", "--otlp=http/protobuf"];
     let mut client = box_.open_client_with("alpha-mcp", &expanded);
@@ -486,6 +480,42 @@ fn a_launch_matches_the_declared_command_as_box_expands_it() {
             .expect("parse the server's arguments"),
         json!(expanded),
         "the server starts from the expanded command the harness ran"
+    );
+
+    drop(client);
+    box_.release_workload();
+    let output = run.wait(SHUTDOWN);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn a_launch_of_the_command_as_written_selects_its_server() {
+    if !fixture::namespace_launcher_is_usable() {
+        return;
+    }
+    let box_ = RuntimeMcpBox::new("mcp-written-command");
+    let declared = vec![
+        "--declared".to_string(),
+        "alpha".to_string(),
+        "--otlp=${OTEL_EXPORTER_OTLP_PROTOCOL}".to_string(),
+    ];
+    let alpha = Server::new("alpha", "alpha-mcp", "read", DiscoveryBehavior::Ready)
+        .launched_through("alpha-mcp", declared.clone());
+    box_.install_server(&alpha);
+    box_.write_workspace(&call_policy(&["alpha"]), &[alpha], BLOCKING_WORKLOAD);
+
+    let mut run = box_.spawn();
+    run.wait_for(box_.workload_path("workload.started"), BOX_STARTUP);
+    let written: Vec<&str> = declared.iter().map(String::as_str).collect();
+    let mut client = box_.open_client_with("alpha-mcp", &written);
+    run.wait_for_through_alias(box_.server_started("alpha-mcp"), STARTUP);
+    let (_, response) = client.initialize_and_activate(json!("init"), STARTUP);
+    assert_eq!(answered_as(&response), "alpha");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&box_.trace("alpha-mcp", "argv"))
+            .expect("parse the server's arguments"),
+        json!(["--declared", "alpha", "--otlp=http/protobuf"]),
+        "a launch that spells the token selects the server, and Box starts it expanded"
     );
 
     drop(client);
