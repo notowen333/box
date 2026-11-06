@@ -319,7 +319,7 @@ fn an_unmatched_launch_without_agent_exec_grants_starts_no_server() {
     box_.install_server(&beta);
     let script = box_.server_executable("beta-mcp");
     let workload = format!(
-        "env '{}' --declared beta > \"$HOME/result\" 2> \"$HOME/error\"\nprintf '%s' \"$?\" > \"$HOME/status\"\n{BLOCKING_WORKLOAD}",
+        "env '{}' --declared beta --token=unmatched-secret > \"$HOME/result\" 2> \"$HOME/error\"\nprintf '%s' \"$?\" > \"$HOME/status\"\n{BLOCKING_WORKLOAD}",
         script.display()
     );
     box_.write_workspace(&call_policy(&["alpha"]), &[alpha], &workload);
@@ -327,7 +327,11 @@ fn an_unmatched_launch_without_agent_exec_grants_starts_no_server() {
     run.wait_for_through_alias(box_.workload_path("workload.started"), BOX_STARTUP);
     assert_eq!(
         std::fs::read_to_string(box_.workload_path("status")).unwrap(),
-        "126"
+        if cfg!(target_os = "linux") {
+            "127"
+        } else {
+            "126"
+        }
     );
     assert_eq!(box_.invocation_count("alpha-mcp"), 0);
     assert_eq!(box_.invocation_count("beta-mcp"), 0);
@@ -337,6 +341,19 @@ fn an_unmatched_launch_without_agent_exec_grants_starts_no_server() {
     let records =
         std::fs::read_to_string(box_.root().join("private/telemetry/records.jsonl")).unwrap();
     assert!(!records.contains("enforcement:mcp-command"), "{records}");
+    let unmatched: Vec<_> = records
+        .lines()
+        .filter(|line| line.contains("enforcement:mcp-unmatched"))
+        .collect();
+    assert!(!unmatched.is_empty(), "{records}");
+    for record in unmatched {
+        assert!(record.contains("shell:spawn"), "{record}");
+        assert!(record.contains("process.command"), "{record}");
+        assert!(record.contains("--declared"), "{record}");
+        assert!(record.contains("<redacted>"), "{record}");
+        assert!(record.contains("ordinary execution"), "{record}");
+        assert!(!record.contains("unmatched-secret"), "{record}");
+    }
 }
 
 #[test]
@@ -350,8 +367,9 @@ fn ordinary_fallback_keeps_agent_grants_and_never_receives_server_secrets() {
     let server_read = box_.event("npx", "read");
     let server_env = box_.event("npx", "env");
     std::fs::write(&secret, "server-file-secret\n").unwrap();
+    let interpreter = std::path::Path::new("/bin/bash").canonicalize().unwrap();
     let script = format!(
-        r#"#!/bin/bash
+        r#"#!{}
 if [ "$1" = "--declared" ]; then
     IFS= read -r value < '{}'
     printf '%s' "$value" > '{}'
@@ -368,6 +386,7 @@ else
     exit 23
 fi
 "#,
+        interpreter.display(),
         secret.display(),
         server_read.display(),
         server_env.display(),
@@ -377,8 +396,7 @@ fi
     let alpha = Server::new("alpha", "npx", "read", DiscoveryBehavior::Ready)
         .with_env("SERVER_SECRET", "server-env-secret");
     let workload = format!(
-        "printf 'PATH=%s\\n' \"$PATH\" > \"$HOME/error\"\nfor path in /bin/bash /usr/bin/bash '{}'; do if [ -f \"$path\" ]; then printf 'visible:%s\\n' \"$path\" >> \"$HOME/error\"; fi; done\nprintf 'input-bytes\\n' | npx 'two words' > \"$HOME/result\" 2>> \"$HOME/error\"\nprintf '%s' \"$?\" > \"$HOME/status\"\n{BLOCKING_WORKLOAD}",
-        program.display()
+        "printf 'input-bytes\\n' | npx 'two words' > \"$HOME/result\" 2> \"$HOME/error\"\nprintf '%s' \"$?\" > \"$HOME/status\"\n{BLOCKING_WORKLOAD}"
     );
     box_.write_workspace(&call_policy(&["alpha"]), &[alpha], &workload);
     let config = box_.operator_home().join("workspace/.strands-box/box.toml");
@@ -424,6 +442,10 @@ fi
     box_.release_workload();
     let output = run.wait(SHUTDOWN);
     assert!(output.status.success(), "{output:?}");
+    let records =
+        std::fs::read_to_string(box_.root().join("private/telemetry/records.jsonl")).unwrap();
+    assert!(records.contains("enforcement:mcp-unmatched"), "{records}");
+    assert!(!records.contains("server-env-secret"), "{records}");
 }
 
 /// **An `[agent] env` runtime option does not reach a stdio MCP server.**

@@ -160,6 +160,13 @@ action `push` in the category `Tool::git`.
 
 Two keys are excluded: `url.full` and `process.command_line`.
 
+An MCP alias non-match produces a `shell:spawn` record with rule `enforcement:mcp-unmatched`,
+verdict `deny`, and cause `enforcement`. The denial applies to the MCP route. Ordinary execution
+can still proceed inside the agent sandbox, and this record does not report its outcome.
+`process.command` names the received program. Alias arguments carry no literal-word provenance,
+so `process.command_args` applies the expanded-argument redaction rules below. The working
+directory is empty because an alias open does not carry it.
+
 `process.command_args` reports an argument the script stated literally. For an argument that arrived
 from an expansion, the record reports:
 
