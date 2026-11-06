@@ -377,7 +377,8 @@ fi
     let alpha = Server::new("alpha", "npx", "read", DiscoveryBehavior::Ready)
         .with_env("SERVER_SECRET", "server-env-secret");
     let workload = format!(
-        "printf 'input-bytes\\n' | npx 'two words' > \"$HOME/result\" 2> \"$HOME/error\"\nprintf '%s' \"$?\" > \"$HOME/status\"\n{BLOCKING_WORKLOAD}"
+        "printf 'PATH=%s\\n' \"$PATH\" > \"$HOME/error\"\nfor path in /bin/bash /usr/bin/bash '{}'; do if [ -f \"$path\" ]; then printf 'visible:%s\\n' \"$path\" >> \"$HOME/error\"; fi; done\nprintf 'input-bytes\\n' | npx 'two words' > \"$HOME/result\" 2>> \"$HOME/error\"\nprintf '%s' \"$?\" > \"$HOME/status\"\n{BLOCKING_WORKLOAD}",
+        program.display()
     );
     box_.write_workspace(&call_policy(&["alpha"]), &[alpha], &workload);
     let config = box_.operator_home().join("workspace/.strands-box/box.toml");
