@@ -409,6 +409,14 @@ fi
         toml::Value::Array(vec![path.clone().into()]),
     );
     filesystem.insert("exec".into(), toml::Value::Array(vec![path.into()]));
+    value["mcp"]["alpha"]["filesystem"]
+        .as_table_mut()
+        .unwrap()
+        .entry("read_file")
+        .or_insert_with(|| toml::Value::Array(Vec::new()))
+        .as_array_mut()
+        .unwrap()
+        .push(interpreter.display().to_string().into());
     std::fs::write(config, toml::to_string(&value).unwrap()).unwrap();
 
     let mut run = box_.spawn();

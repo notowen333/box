@@ -270,15 +270,15 @@ The harness gets these errors when it starts a server, and the box keeps running
 
 An ordinary fallback reports the program's own exit status. If no ordinary executable exists on
 the agent's visible `PATH`, the alias reports status 127. A missing grant can make a program
-invisible on Linux, so this status does not prove the program is absent from the host.
+invisible on Linux, so this status does not prove the program is absent from the surrounding OS.
 If a visible program is refused execution, the alias reports status 126.
 A script also needs its interpreter to be visible and executable; a missing interpreter can
 produce status 127 even when the script itself is visible. Scripts need a `#!` line: Box does not
 try an implicit shell for an unrecognized executable.
 
 Failures before the broker selects a route report status 125. After readiness, an incompatible
-protocol version or program identifier also reports 125. A closed stream, a read error, or an
-unrecognized frame retains the existing MCP completion behavior.
+protocol version or program identifier also reports 125. After readiness, a closed stream or read
+error ends the alias with status 0. Unrelated recognized frames are ignored.
 
 For a request the policy refuses, see [troubleshooting](./mcp-policy.md#troubleshooting).
 
