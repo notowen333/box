@@ -1,5 +1,56 @@
+use std::sync::LazyLock;
+
+use crate::context::{BuildArch, OsFamily};
+use crate::packs::CATALOG;
 use crate::{ContextBuilder, Pack, RunContext};
 use serde_json::{Value, json};
+
+static SCHEMA: LazyLock<Value> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../tests/fixtures/box.schema.json")).unwrap()
+});
+
+/// The service schema this crate's payloads are checked against.
+pub(crate) fn schema() -> &'static Value {
+    &SCHEMA
+}
+
+/// The sorted values the schema allows at `pointer`, an `enum` or a `oneOf` with one.
+pub(crate) fn schema_enum(pointer: &str) -> Vec<String> {
+    let node = schema()
+        .pointer(pointer)
+        .unwrap_or_else(|| panic!("{pointer}"));
+    let values = node.get("enum").or_else(|| {
+        node["oneOf"]
+            .as_array()?
+            .iter()
+            .find_map(|branch| branch.get("enum"))
+    });
+    let mut values: Vec<String> = values
+        .unwrap_or_else(|| panic!("{pointer} has no enum"))
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect();
+    values.sort_unstable();
+    values
+}
+
+/// The sorted JSON strings that `values` serialize to.
+pub(crate) fn serialized<T: serde::Serialize>(values: &[T]) -> Vec<String> {
+    let mut texts: Vec<String> = values
+        .iter()
+        .map(|value| {
+            serde_json::to_value(value)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    texts.sort_unstable();
+    texts
+}
 
 fn builder() -> ContextBuilder {
     ContextBuilder::new("1.2.3").unwrap()
@@ -22,9 +73,7 @@ fn pack<'a>(id: Option<&'a str>, bytes: &'a [u8], bundled_location: Option<bool>
 }
 
 fn validator() -> jsonschema::Validator {
-    let schema: Value =
-        serde_json::from_str(include_str!("../tests/fixtures/box.schema.json")).unwrap();
-    jsonschema::draft4::new(&schema["definitions"]["run_context"]).unwrap()
+    jsonschema::draft4::new(&schema()["definitions"]["run_context"]).unwrap()
 }
 
 #[test]
@@ -207,4 +256,71 @@ fn resolved_empty_graph_is_known_empty() {
     let value = snapshot(context);
     assert_eq!(value["builtin_packs"], json!([]));
     assert_eq!(value["has_custom_packs"], false);
+}
+
+#[test]
+fn context_enums_cover_the_schema_exactly() {
+    // Each match is exhaustive, so a new variant does not compile until it is listed here.
+    let families = [
+        OsFamily::Macos,
+        OsFamily::Linux,
+        OsFamily::Windows,
+        OsFamily::Other,
+    ];
+    for family in &families {
+        match family {
+            OsFamily::Macos | OsFamily::Linux | OsFamily::Windows | OsFamily::Other => {}
+        }
+    }
+    assert_eq!(
+        serialized(&families),
+        schema_enum("/definitions/run_context/properties/os_family")
+    );
+    let arches = [BuildArch::Aarch64, BuildArch::X86_64, BuildArch::Other];
+    for arch in &arches {
+        match arch {
+            BuildArch::Aarch64 | BuildArch::X86_64 | BuildArch::Other => {}
+        }
+    }
+    assert_eq!(
+        serialized(&arches),
+        schema_enum("/definitions/run_context/properties/build_arch")
+    );
+}
+
+#[test]
+fn os_version_is_trimmed_bounded_and_null_when_empty() {
+    let long = "9".repeat(65);
+    let wide = "é".repeat(65);
+    for (reported, expected) in [
+        (None, Value::Null),
+        (Some(""), Value::Null),
+        (Some(" \t\n"), Value::Null),
+        (Some(" 22.04\n"), json!("22.04")),
+        (Some(long.as_str()), json!("9".repeat(64))),
+        (Some(wide.as_str()), json!("é".repeat(64))),
+    ] {
+        let context =
+            RunContext::new("1.2.3", "linux", reported.map(str::to_owned), "x86_64").unwrap();
+        let value = serde_json::to_value(context).unwrap();
+        assert_eq!(value["os_version"], expected, "{reported:?}");
+        assert!(validator().is_valid(&value), "{value}");
+    }
+}
+
+#[test]
+fn a_context_with_every_field_known_and_the_whole_catalog_fits_the_schema() {
+    let mut context = RunContext::new("1.2.3", "macos", Some("14.5".into()), "aarch64").unwrap();
+    context.builtin_packs = Some(CATALOG.keys().map(|id| (*id).to_owned()).collect());
+    context.mcp_configured = Some(true);
+    context.has_custom_packs = Some(true);
+    context.profile_policy_present = Some(true);
+    context.profile_hash = Some("0".repeat(64));
+    let value = serde_json::to_value(context).unwrap();
+    assert!(!CATALOG.is_empty());
+    let errors: Vec<String> = validator()
+        .iter_errors(&value)
+        .map(|error| error.to_string())
+        .collect();
+    assert!(errors.is_empty(), "{errors:?}");
 }

@@ -426,7 +426,13 @@ mod tests {
     fn capture(outcome: LaunchOutcome) -> (Session, Receiver<Value>) {
         let (send, events) = mpsc::channel();
         let session = Session::start(invocation(), outcome, move |event| {
-            send.send(serde_json::to_value(event).unwrap()).unwrap();
+            let value = serde_json::to_value(event).unwrap();
+            // Every event a session emits must fit the service schema.
+            jsonschema::draft4::new(crate::tests::schema())
+                .unwrap()
+                .validate(&value)
+                .unwrap();
+            send.send(value).unwrap();
         });
         (session, events)
     }
@@ -1024,5 +1030,40 @@ mod tests {
             assert_eq!(run[key], shutdown[key], "{key}");
         }
         assert!(service.events.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_reported_core_failure_code_reaches_only_the_shutdown_event() {
+        for code in [None, Some("B0114"), Some("uncoded")] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("records.jsonl");
+            let (mut session, events) = capture(LaunchOutcome::Unknown);
+            session.observe(Journal::start(&path).unwrap(), catalog());
+            append_control(&path, "box_stopped", "refused", None);
+            if let Some(code) = code {
+                session.core_failure_code(code);
+            }
+            session.finish(Instant::now(), ExitOutcome::Nonzero);
+            let run = events.try_recv().unwrap();
+            assert!(run["data"].get("core_failure_code").is_none());
+            let polling = events.try_recv().unwrap();
+            assert!(polling["data"].get("core_failure_code").is_none());
+            let shutdown = assert_shutdown(&events, &run, "nonzero", Some("refused"));
+            assert_eq!(
+                shutdown["data"]["core_failure_code"],
+                json!(code),
+                "{code:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_core_failure_code_is_kept_without_journal_observation() {
+        let (session, events) = capture(LaunchOutcome::Unknown);
+        session.core_failure_code("uncoded");
+        session.finish(Instant::now(), ExitOutcome::Nonzero);
+        let run = events.try_recv().unwrap();
+        let shutdown = assert_shutdown(&events, &run, "nonzero", None);
+        assert_eq!(shutdown["data"]["core_failure_code"], "uncoded");
     }
 }

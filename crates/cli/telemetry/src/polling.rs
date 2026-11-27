@@ -346,4 +346,21 @@ mod tests {
         assert!(polling.decisions.iter().all(|row| row.count == MAX_INTEGER));
         assert!(interval.finish(start, true).unwrap().decisions.is_empty());
     }
+
+    #[test]
+    fn actions_and_outcomes_cover_the_schema_exactly() {
+        use crate::tests::{schema, schema_enum};
+
+        let sorted = |values: &[&str]| {
+            let mut values: Vec<String> = values.iter().map(|value| (*value).to_owned()).collect();
+            values.sort_unstable();
+            values
+        };
+        assert_eq!(sorted(&ACTIONS), schema_enum("/definitions/action"));
+        assert_eq!(sorted(&OUTCOMES), schema_enum("/definitions/outcome"));
+        assert_eq!(
+            schema()["definitions"]["polling"]["properties"]["decisions"]["maxItems"],
+            ACTIONS.len() * OUTCOMES.len()
+        );
+    }
 }

@@ -230,13 +230,12 @@ mod tests {
 
     fn validate(event: &Event) -> Value {
         let value = serde_json::to_value(event).unwrap();
-        let schema: Value =
-            serde_json::from_str(include_str!("../tests/fixtures/box.schema.json")).unwrap();
-        jsonschema::validator_for(&schema)
-            .unwrap()
-            .validate(&value)
-            .unwrap();
+        validator().validate(&value).unwrap();
         value
+    }
+
+    fn validator() -> jsonschema::Validator {
+        jsonschema::draft4::new(crate::tests::schema()).unwrap()
     }
 
     #[test]
@@ -421,13 +420,7 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("core_failure_code");
-        let schema: Value =
-            serde_json::from_str(include_str!("../tests/fixtures/box.schema.json")).unwrap();
-        assert!(
-            jsonschema::validator_for(&schema)
-                .unwrap()
-                .is_valid(&released)
-        );
+        assert!(validator().is_valid(&released));
         for code in ["B0114", "P0303", "uncoded"] {
             let refused = validate(&invocation.shutdown_event(
                 completed,
@@ -530,5 +523,139 @@ mod tests {
             &invocation.polling_event(interval.finish(invocation.started(), true).unwrap()),
         );
         assert_eq!(empty["data"]["decisions"], json!([]));
+    }
+
+    #[test]
+    fn event_enums_cover_the_schema_exactly() {
+        use crate::tests::{schema_enum, serialized};
+
+        // Each match is exhaustive, so a new variant does not compile until it is listed here.
+        let reasons = [
+            FailureReason::ProfileMissing,
+            FailureReason::ProfileInvalid,
+            FailureReason::AgentNotFound,
+            FailureReason::PolicyRejected,
+            FailureReason::Unknown,
+        ];
+        for reason in reasons {
+            match reason {
+                FailureReason::ProfileMissing
+                | FailureReason::ProfileInvalid
+                | FailureReason::AgentNotFound
+                | FailureReason::PolicyRejected
+                | FailureReason::Unknown => {}
+            }
+        }
+        assert_eq!(
+            serialized(&reasons),
+            schema_enum("/definitions/run/properties/failure_reason")
+        );
+        let exits = [ExitOutcome::Zero, ExitOutcome::Nonzero];
+        for exit in exits {
+            match exit {
+                ExitOutcome::Zero | ExitOutcome::Nonzero => {}
+            }
+        }
+        assert_eq!(
+            serialized(&exits),
+            schema_enum("/definitions/shutdown/properties/exit_outcome")
+        );
+        let cores = [CoreOutcome::Ok, CoreOutcome::Refused];
+        for core in cores {
+            match core {
+                CoreOutcome::Ok | CoreOutcome::Refused => {}
+            }
+        }
+        assert_eq!(
+            serialized(&cores),
+            schema_enum("/definitions/shutdown/properties/core_outcome")
+        );
+    }
+
+    #[test]
+    fn an_uncoded_core_failure_is_reported_as_uncoded() {
+        let invocation = invocation();
+        let completed = invocation.started() + Duration::from_millis(5);
+        for core_outcome in [Some(CoreOutcome::Refused), None] {
+            let shutdown = validate(&invocation.shutdown_event(
+                completed,
+                ExitOutcome::Nonzero,
+                core_outcome,
+                Some("uncoded"),
+            ));
+            assert_eq!(
+                shutdown["data"],
+                json!({
+                    "invocation_duration_ms": 5,
+                    "exit_outcome": "nonzero",
+                    "core_outcome": core_outcome.map(|_| "refused"),
+                    "core_failure_code": "uncoded",
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn every_shutdown_combination_fits_the_schema() {
+        let invocation = invocation();
+        let completed = invocation.started();
+        for exit in [ExitOutcome::Zero, ExitOutcome::Nonzero] {
+            for core in [None, Some(CoreOutcome::Ok), Some(CoreOutcome::Refused)] {
+                for code in [None, Some("B0101"), Some("P0303"), Some("uncoded")] {
+                    let shutdown =
+                        validate(&invocation.shutdown_event(completed, exit, core, code));
+                    assert_eq!(shutdown["data"]["core_failure_code"], json!(code));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_schema_refuses_a_failure_code_that_could_carry_text() {
+        let invocation = invocation();
+        let shutdown = validate(&invocation.shutdown_event(
+            invocation.started(),
+            ExitOutcome::Nonzero,
+            Some(CoreOutcome::Refused),
+            Some("B0101"),
+        ));
+        for text in [
+            "",
+            "b0101",
+            "B010",
+            "B01010",
+            "BB0101",
+            "Uncoded",
+            "uncoded ",
+            "error",
+            "refusing to run: /home/user/profile.toml",
+        ] {
+            let mut event = shutdown.clone();
+            event["data"]["core_failure_code"] = json!(text);
+            assert!(!validator().is_valid(&event), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_batch_of_every_event_kind_fits_the_schema() {
+        use crate::{ActionCatalog, DecisionInterval};
+
+        let invocation = invocation();
+        let polling = DecisionInterval::new(invocation.started(), ActionCatalog::new([]))
+            .finish(invocation.started(), true)
+            .unwrap();
+        let batch = serde_json::to_value([
+            invocation.run_event(LaunchOutcome::Confirmed(None)),
+            invocation.polling_event(polling),
+            invocation.shutdown_event(
+                invocation.started(),
+                ExitOutcome::Nonzero,
+                Some(CoreOutcome::Refused),
+                Some("uncoded"),
+            ),
+        ])
+        .unwrap();
+        validator().validate(&batch).unwrap();
+        assert!(!validator().is_valid(&json!([batch[0], {"v": 1}])));
     }
 }

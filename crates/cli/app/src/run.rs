@@ -2686,28 +2686,91 @@ impl Launch {
 fn core_failure_code(received: &strands_box::RunEventReceiver) -> Option<&'static str> {
     while let Ok(event) = received.try_recv() {
         if let strands_box::RunEvent::Refused { code } = event {
-            return Some(match code {
-                diagnostics::Kind::Coded(code) => code.as_str(),
-                diagnostics::Kind::Uncoded(_) => "uncoded",
-            });
+            return Some(failure_code_text(code));
         }
     }
     None
 }
 
+/// The shutdown event's text for a Core failure's message code: the code, or `uncoded`.
+fn failure_code_text(code: diagnostics::Kind) -> &'static str {
+    match code {
+        diagnostics::Kind::Coded(code) => code.as_str(),
+        diagnostics::Kind::Uncoded(_) => "uncoded",
+    }
+}
+
 #[cfg(test)]
-#[test]
-fn every_core_failure_code_fits_the_telemetry_schema_pattern() {
-    // The schema's `core_failure_code` pattern is `^([A-Z][0-9]{4}|uncoded)$`.
-    for code in diagnostics::Code::ALL {
-        let text = code.as_str();
-        let (prefix, digits) = text.split_at(1);
-        assert!(
-            prefix.bytes().all(|b| b.is_ascii_uppercase())
-                && digits.len() == 4
-                && digits.bytes().all(|b| b.is_ascii_digit()),
-            "{text} does not fit the shutdown event's core_failure_code pattern"
-        );
+mod core_failure_code_tests {
+    use std::time::{Duration, Instant, SystemTime};
+
+    use serde_json::{Value, json};
+    use strands_box_cli_telemetry::{
+        ContextBuilder, CoreOutcome, ExitOutcome, InstallationId, Invocation,
+    };
+
+    use super::*;
+
+    #[test]
+    fn an_uncoded_failure_of_any_severity_is_reported_as_uncoded() {
+        for severity in diagnostics::Severity::ALL {
+            assert_eq!(
+                failure_code_text(diagnostics::Kind::Uncoded(severity)),
+                "uncoded"
+            );
+        }
+    }
+
+    #[test]
+    fn a_coded_failure_is_reported_as_its_code() {
+        for &code in diagnostics::Code::ALL {
+            assert_eq!(failure_code_text(code.into()), code.as_str());
+        }
+    }
+
+    #[test]
+    fn a_run_that_sent_no_refusal_reports_no_code() {
+        let (events, received) = strands_box::run_events();
+        assert_eq!(core_failure_code(&received), None);
+        drop(events);
+        assert_eq!(core_failure_code(&received), None);
+    }
+
+    #[test]
+    fn every_reported_code_fits_the_telemetry_schema() {
+        let schema: Value = serde_json::from_str(include_str!(
+            "../../telemetry/tests/fixtures/box.schema.json"
+        ))
+        .unwrap();
+        let validator = jsonschema::draft4::new(&schema).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let invocation = Invocation::new(
+            InstallationId::load_or_create(directory.path()).unwrap(),
+            ContextBuilder::new("1.2.3").unwrap().finish(),
+            Instant::now(),
+            SystemTime::UNIX_EPOCH + Duration::from_secs(10),
+        )
+        .unwrap();
+        let kinds = diagnostics::Code::ALL
+            .iter()
+            .map(|code| diagnostics::Kind::from(*code))
+            .chain(diagnostics::Severity::ALL.map(diagnostics::Kind::Uncoded));
+        for kind in kinds {
+            let text = failure_code_text(kind);
+            let event = serde_json::to_value(invocation.shutdown_event(
+                invocation.started(),
+                ExitOutcome::Nonzero,
+                Some(CoreOutcome::Refused),
+                Some(text),
+            ))
+            .unwrap();
+            assert_eq!(event["data"]["core_failure_code"], json!(text));
+            let errors: Vec<String> = validator
+                .iter_errors(&event)
+                .map(|error| error.to_string())
+                .collect();
+            assert!(errors.is_empty(), "{text}: {errors:?}");
+        }
     }
 }
 
